@@ -1,0 +1,339 @@
+#!/usr/bin/env bash
+# License: GPLv3
+# Credits: Felipe Facundes
+
+: <<'DOCUMENTATION'
+A bash script for interactive font previews using ImageMagick and fzf with Sixel support.
+Displays customizable text samples with adjustable size, colors, and font parameters.
+Supports both GUI selection via fzf and direct output to image files.
+Lightweight (1.0) and works in terminals with/without Sixel graphics capability.
+DOCUMENTATION
+
+clear
+
+SCRIPT="${0##*/}"
+TMPDIR="${TMPDIR:-/tmp}"
+FONTPREVIEWTEMPDIR="${TMPDIR}/${SCRIPT%.*}"
+TEMP_FILE="$FONTPREVIEWTEMPDIR/temp_prev.jpg"
+
+[[ -d "${FONTPREVIEWTEMPDIR}" ]] && rm -rf "${FONTPREVIEWTEMPDIR}"
+[[ ! -d "${FONTPREVIEWTEMPDIR}" ]] && mkdir -p "${FONTPREVIEWTEMPDIR}"
+
+cleanup() { [[ -d "${FONTPREVIEWTEMPDIR}" ]] && rm -rf "${FONTPREVIEWTEMPDIR}"; }
+trap cleanup INT EXIT
+
+VERSION=1.0
+if [[ -n "$TERMUX_VERSION" ]]; then
+	FONT_SIZE="${FONT_SIZE:-16}"
+	SIZE="${SIZE:-600x300}"
+	FZF_MARGIN_R="${FZF_MARGIN_R:-60}"
+	FZF_MARGIN_H="${FZF_MARGIN_H:-40}"
+else
+	FONT_SIZE="${FONT_SIZE:-24}"
+	SIZE="${SIZE:-1000x700}"
+	FZF_MARGIN_R="${FZF_MARGIN_R:-80}"
+	FZF_MARGIN_H="${FZF_MARGIN_H:-80}"
+fi
+BG_COLOR=${BG_COLOR:-"#ffffff"}
+FG_COLOR=${FG_COLOR:-"#000000"}
+PREVIEW_TEXT="${PREVIEW_TEXT:-$(
+	cat <<-EOF
+	{}
+
+	ABCDEFGHIJKLMNOPQRSTUVWXYZ
+
+	abcdefghijklmnopqrstuvwxyz
+
+	1234567890
+
+	'$\!/\%|&*@+=#?()[]'
+
+	A white sheep peacefully 
+	grazes on the green pasture.
+	EOF
+)}"
+
+# Check if fzf and ImageMagick are installed
+if ! command -v fzf magick &> /dev/null; then
+    echo "❌ Error: This script requires 'fzf' and 'ImageMagick' to be installed."
+    exit 1
+fi
+
+# IS TERMINAL SIXEL CAPABLE?
+IFS=";?c" read -ra REPLY -s -t 1 -d "c" -p $'\e[c' >&2
+for code in "${REPLY[@]}"; do
+	if [[ $code == "4" ]]; then
+		hassixel=yup
+		break
+	fi
+done
+
+# YAFT is vt102 compatible, cannot respond to vt220 escape sequence.
+if [[ "$TERM" == yaft* ]]; then hassixel=yeah; fi
+
+if [[ -z "$hassixel" && -z "$LSIX_FORCE_SIXEL_SUPPORT" ]]; then
+	cat <<-EOF >&2
+	Error: Your terminal does not report having sixel graphics support.
+			Falling back to viu for image display.
+
+	Please use a sixel capable terminal, such as alacritty-sixel-git,
+	or contour, or wezterm, or xterm -ti vt340.
+
+	You may test your terminal by viewing a single image, like so:
+
+		magick foo.jpg -geometry 800x480  sixel:-
+	EOF
+	command -v feh >/dev/null && MODE='jpg:- | feh -'
+	! command -v feh >/dev/null && MODE="$TEMP_FILE | xdg-open $TEMP_FILE"
+else
+	MODE='sixel:-'
+fi
+
+read -ra cmd <<< "$MODE"
+
+setup_clipboard() {
+    # Termux (Android)
+    if [[ -n "$TERMUX_VERSION" ]]; then
+        if command -v termux-clipboard-set &> /dev/null; then
+            clipboard_copy() {
+                echo "$1" | termux-clipboard-set
+                echo "Font copied to clipboard!"
+            }
+        else
+            clipboard_copy() {
+                echo "termux-clipboard-set is not available. Cannot copy to clipboard."
+            }
+        fi
+    
+    # Wayland
+    elif [[ ${XDG_SESSION_TYPE,,} == "wayland" ]]; then
+        if command -v wl-copy &> /dev/null; then
+            clipboard_copy() {
+                echo "$1" | wl-copy
+                echo "Font copied to clipboard!"
+            }
+        else
+            clipboard_copy() {
+                echo "wl-copy is not installed. Cannot copy to clipboard in Wayland."
+            }
+        fi
+    
+    # X11
+    elif [[ ${XDG_SESSION_TYPE,,} == "x11" ]] || [[ -n "$DISPLAY" ]]; then
+        if command -v xclip &> /dev/null; then
+            clipboard_copy() {
+                echo "$1" | xclip -selection clipboard
+                echo "Font copied to clipboard!"
+            }
+        else
+            clipboard_copy() {
+                echo "xclip is not installed. Cannot copy to clipboard in X11."
+            }
+        fi
+    
+    # Other environments (macOS, etc)
+    else
+        if command -v pbcopy &> /dev/null; then  # macOS
+            clipboard_copy() {
+                echo "$1" | pbcopy
+                echo "Font copied to clipboard!"
+            }
+        else
+            clipboard_copy() {
+                echo "No clipboard copy method available for this environment."
+            }
+        fi
+    fi
+}
+
+show_requirements() {
+printf "%s" "\
+usage: $SCRIPT [--requirements]
+
+Essential dependencies and their purposes:
+
+Core requirements:
+   fzf                    Fuzzy finder for interactive font selection
+   ImageMagick            Font preview generation and display (magick command)
+
+Optional dependencies:
+   wl-copy                (Wayland) Copy fonts to clipboard
+   xclip                  (X11) Copy fonts to clipboard  
+   termux-clipboard-set   (Termux) Copy fonts to clipboard
+   feh                    Fallback image viewer for terminals without Sixel support
+   xdg-open               Fallback image viewer for Desktops without feh
+"
+}
+
+show_help() {
+printf "%s" "\
+usage: $SCRIPT [-h] [--size \"px\"] [--font-size \"FONT_SIZE\"] [--bg-color \"BG_COLOR\"] 
+                      [--fg-color \"FG_COLOR\"] [--preview-text \"PREVIEW_TEXT\"] [-i font.otf] 
+                      [--margin-right value] [--margin-height value] [-o fontpreview.png]
+                      [--version]
+ 
+┌─┐┌─┐┌┐┌┌┬┐┌─┐┬─┐┌─┐┬  ┬┬┌─┐┬ ┬
+├┤ │ ││││ │ ├─┘├┬┘├┤ └┐┌┘│├┤ │││
+└  └─┘┘└┘ ┴ ┴  ┴└─└─┘ └┘ ┴└─┘└┴┘
+Very customizable and minimal font previewer written in bash
+ 
+optional arguments:
+   -h,  --help            show this help message and exit
+   -r,  --requirements    show dependencies and their purposes
+   -i,  --input           filename of the input font (.otf, .ttf, .woff are supported)
+   -in, --install         add custom fonts to your system
+   -o,  --output          filename of the output preview image (input.png if not set)
+   -s,  --size            size of the font preview window (default: $SIZE)
+   -mr, --margin-right    fzf margin right (default: $FZF_MARGIN_R)
+   -mh, --margin-height   fzf margin height (default: $FZF_MARGIN_H)
+   -fs, --font-size       font size (default: $FONT_SIZE)
+   -bg, --bg-color        background color of the font preview window (default: $BG_COLOR)
+   -fg, --fg-color        foreground color of the font preview window (default: $FG_COLOR)
+   -t,  --text            preview text that should be displayed in the font preview window
+   -v,  --version         show the version of fontpreview you are using
+
+Environment Variables:
+   FONT_SIZE              Set default font size (currently: $FONT_SIZE)
+   SIZE                   Set default preview size (currently: $SIZE)
+   FZF_MARGIN_R           Set default fzf right margin (currently: $FZF_MARGIN_R)
+   FZF_MARGIN_H           Set default fzf height margin (currently: $FZF_MARGIN_H)
+   BG_COLOR               Set default background color (currently: $BG_COLOR)
+   FG_COLOR               Set default foreground color (currently: $FG_COLOR)
+   PREVIEW_TEXT           Set default preview text
+"
+echo
+show_requirements
+}
+
+install_font() {
+    if [[ -f "$input_font" ]]; then
+        local fonts_dir=~/.fonts
+        local basename=${input_font##*/}
+        local oneextless=${basename%.*}
+        local font_dir="${fonts_dir}/${oneextless}"
+
+        # Check if file is a valid font
+        if_font=$(file "$input_font")
+        if_font=${if_font,,}
+        if ! [[ ${if_font} =~ "font" ]]; then
+            echo "Error: The file is not a valid font file." >&2
+            exit 1
+        fi
+
+        # Check if font is already installed
+        if [[ -d "$font_dir" ]]; then
+            echo "Warning: The font is already installed!" >&2
+            exit 1
+        fi
+
+        # Install the font
+        mkdir -p "$font_dir"
+        cp "$input_font" "$font_dir" || {
+            echo "Error: Failed to copy the font file." >&2
+            exit 1
+        }
+        fc-cache -fv >/dev/null &
+        echo "Font installed successfully in: $font_dir"
+    else
+        echo "Usage: Use '-i' to specify the font file and '--install' to install it." >&2
+        exit 1
+    fi
+	exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -s|--size)
+			shift
+            SIZE="$1"
+            ;;
+		-mr|--margin-right)
+			shift
+			FZF_MARGIN_R="$1"
+			;;
+		-mh|--margin-height)
+			shift
+			FZF_MARGIN_H="$1"
+			;;
+        -h|--help)
+            show_help
+            exit
+            ;;
+        -r|--requirements)
+            show_requirements
+            exit
+            ;;
+        -v|--version)
+            echo "$VERSION"
+            exit
+            ;;
+        -i|--input)
+			shift
+            input_font="$1"
+            ;;
+        -in|--install)
+			shift
+			install_font
+            ;;
+        -o|--output)
+			shift
+            output_file="$1"
+            ;;
+        -fs|--font-size)
+			shift
+            FONT_SIZE="$1"
+            ;;
+        -bg|--bg-color)
+			shift
+            BG_COLOR="$1"
+            ;;
+        -fg|--fg-color)
+			shift
+            FG_COLOR="$1"
+            ;;
+        -t|--text)
+			shift
+            PREVIEW_TEXT="$1"
+            ;;
+        --)
+            shift
+            break
+            ;;
+		*)
+            shift
+            break
+            ;;
+    esac
+    shift
+done
+
+# If an input file was specified, use only that
+if [[ -f "$input_font" ]]; then
+    font_list="$input_font"
+else
+    # Generate font list only if no input file was specified
+    font_list=$(magick -list font | grep "Font:" | awk '{print $2}' | sort -u)
+fi
+
+if [[ -n "$output_file" ]]; then
+	[[ ! -f "$font_list" ]] && echo "Use -i to specify the font file and -o to extract the image" && exit 1
+	magick -size "$SIZE" -background "$BG_COLOR" -fill "$FG_COLOR" -font "$font_list" \
+		-pointsize "$FONT_SIZE" label:"$PREVIEW_TEXT" -geometry "$SIZE" "$output_file"
+	exit 0
+elif [[ -z "$output_file" ]]; then
+	# Use fzf for interactive selection with Sixel preview
+	selected_font=$(echo "$font_list" | fzf \
+		--prompt="🔍 Select a font: " \
+		--preview="magick -size \"$SIZE\" -background \"$BG_COLOR\" -fill \"$FG_COLOR\" -font '{}' \
+		-pointsize \"$FONT_SIZE\" label:\"$PREVIEW_TEXT\" -geometry \"$SIZE\" ${cmd[*]}" \
+		--preview-window="right:${FZF_MARGIN_R}%:border-left" \
+		--height="${FZF_MARGIN_H}"%)
+	# If a font was selected, show confirmation
+	if [[ -n "$selected_font" ]]; then
+		echo "✅ Selected font: $selected_font"
+		setup_clipboard
+		clipboard_copy "$selected_font"
+	else
+		echo "🚫 No font selected."
+	fi
+fi
