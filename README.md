@@ -6,6 +6,7 @@
 
 A lightning-fast, terminal-based font previewer with Sixel graphics support, designed for designers and developers who work with fonts in Linux/Unix environments.
 
+This script is part of the shell_utils framework, one of the largest collections of scripts and utilities aimed at simplifying and enhancing user experience in the terminal.
 ![Demo Animation](FontPreview.gif)
 
 ## Features 🌟
