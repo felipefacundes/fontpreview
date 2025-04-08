@@ -103,8 +103,8 @@ sudo apt install feh  # Debian/Ubuntu
 ```
 
 **Problem:** Missing fonts  
-**Solution:** Specify exact path with `-i` flag
-**Install** To install additional fonts on your system, use the `--install` flag and provide the font file exact path with `-i`
+**Solution:** Specify exact path with `-i` flag  
+**Install:** To install additional fonts on your system, use the `--install` flag and provide the font file exact path with `-i`  
 
 ## Contributing 🤝
 
