@@ -6,7 +6,7 @@
 
 A lightning-fast, terminal-based font previewer with Sixel graphics support, designed for designers and developers who work with fonts in Linux/Unix environments.
 
-![Demo Animation](demo.gif)
+![Demo Animation](FontPreview.gif)
 
 ## Features 🌟
 
@@ -104,7 +104,7 @@ sudo apt install feh  # Debian/Ubuntu
 
 **Problem:** Missing fonts  
 **Solution:** Specify exact path with `-i` flag  
-**Install:** To install additional fonts on your system, use the `--install` flag and provide the font file exact path with `-i`  
+**Install:** To install additional fonts, use the `--install` flag and provide the font file exact path with `-i`  
 
 ## Contributing 🤝
 
